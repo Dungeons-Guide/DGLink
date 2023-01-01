@@ -1,3 +1,1 @@
-
-rootProject.name = "GithubDiscordLink"
-
+rootProject.name = "kr.syeyoung.dglink"
