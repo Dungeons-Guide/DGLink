@@ -14,6 +14,7 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
+    implementation("dev.kord:kord-core:v0.8.0-M17")
 }
 
 tasks.test {
