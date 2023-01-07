@@ -18,7 +18,7 @@ bin/
 
 .env
 privatekey.pem
-
+privatekeypkcs8.pem
 ### IntelliJ IDEA ###
 .idea
 *.iws
