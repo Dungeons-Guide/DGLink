@@ -1,7 +1,9 @@
 package kr.syeyoung.discord
 
 import dev.kord.core.Kord
+import dev.kord.core.behavior.channel.asChannelOf
 import dev.kord.core.behavior.execute
+import dev.kord.core.entity.channel.thread.ThreadChannel
 import dev.kord.core.event.channel.ChannelUpdateEvent
 import dev.kord.core.event.channel.thread.ThreadChannelCreateEvent
 import dev.kord.core.event.channel.thread.ThreadChannelDeleteEvent
@@ -19,7 +21,7 @@ import java.util.OptionalInt
 
 fun Kord.registerHandlers() {
     this.on<MessageCreateEvent> {
-        if (this.member?.isBot == true) return@on;
+        if (this.member?.id == kord.selfId) return@on;
         if (this.message.author == null) return@on;
         EventHandler.onMessageCreate(this)
     }
@@ -27,20 +29,20 @@ fun Kord.registerHandlers() {
         EventHandler.onMessageDelete(this)
     }
     this.on<MessageUpdateEvent> {
-        if (this.getMessage().author?.isBot == true) return@on;
+        if (this.getMessage().author?.id == kord.selfId) return@on;
         EventHandler.onMessageUpdate(this)
     }
     this.on<ThreadChannelCreateEvent> {
-        if (this.channel.owner.asUser().isBot) return@on;
-        if (this.channel.parentId != forumChannel.id) return@on;
+        if (this.channel.ownerId == kord.selfId) return@on;
+        if (!channelIdMap.containsKey(this.channel.parentId)) return@on;
         EventHandler.onThreadChannelCreate(this)
     }
     this.on<ThreadChannelDeleteEvent> {
-        if (this.channel.parentId != forumChannel.id) return@on;
+        if (!channelIdMap.containsKey(this.channel.parentId)) return@on;
         EventHandler.onThreadChannelDelete(this)
     }
     this.on<ThreadUpdateEvent> {
-        if (this.channel.parentId != forumChannel.id) return@on;
+        if (!channelIdMap.containsKey(this.channel.parentId)) return@on;
         EventHandler.onThreadChannelUpdate(this)
     }
 }
@@ -48,7 +50,8 @@ object EventHandler {
     suspend fun onMessageCreate(event: MessageCreateEvent) {
         if (event.message.type != dev.kord.common.entity.MessageType.Default) return;
 
-        val threadId = LinkManager.getThreadIdByDiscord(event.message.channelId);
+        val threadId = LinkManager.getThreadIdByDiscord(event.message.channel.asChannelOf<ThreadChannel>().parentId,
+            event.message.channelId);
 
         val id = GithubAPI.createComment(threadId, """
             [`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): ${event.message.content}
@@ -85,12 +88,13 @@ object EventHandler {
         val name = threadChannelCreateEvent.channel.owner.asMember(kord.guilds.first().id);
         val firstMsg = threadChannelCreateEvent.channel.messages.first();
 
+        val targetConfiguration = channelIdMap.get(threadChannelCreateEvent.channel.parentId) ?: return;
 
-
-        val tags = kord.rest.channel.getForumChannel(forumChannel.id).availableTags.value!!;
-        val tagStr = kord.rest.channel.getForumChannel(threadChannelCreateEvent.channel.id).appliedTags
+        val tags = kord.rest.channel.getForumChannel(threadChannelCreateEvent.channel.parentId).availableTags.value!!;
+        var tagStr = kord.rest.channel.getForumChannel(threadChannelCreateEvent.channel.id).appliedTags
             .value.orEmpty().map { a -> tags.find { b -> b.id.value == a } }
             .map { it?.name ?: "" }
+        tagStr = (tagStr.toSet() + targetConfiguration.tags).toList()
 
 
         val id = GithubAPI.createIssue(threadChannelCreateEvent.channel.name,
@@ -98,15 +102,14 @@ object EventHandler {
             [`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}): ${firstMsg.content} 
                 ${firstMsg.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n")}
             """.trimIndent(), tagStr
-
         );
 
-        LinkManager.makeLink(id.number, threadId = threadChannelCreateEvent.channel.id);
+        LinkManager.makeLink(id.number, parentId = threadChannelCreateEvent.channel.parentId, threadId = threadChannelCreateEvent.channel.id);
         LinkManager.linkTMessage(id.number, threadChannelCreateEvent.channel.id, firstMsg.id)
 
         GithubAPI.createComment(id.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${threadChannelCreateEvent.channel.parentId}/${threadChannelCreateEvent.channel.id})");
 
-        webhook.execute(webhook_token, threadId = threadChannelCreateEvent.channel.id) {
+        targetConfiguration.webhook.execute(targetConfiguration.webhookSecret, threadId = threadChannelCreateEvent.channel.id) {
             this.content = "This issue has been linked to github issues! [Here](https://github.com/Dungeons-Guide/Skyblock-Dungeons-Guide/issues/${id.number})"
             this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
             this.username = "Github Issues"
@@ -119,14 +122,16 @@ object EventHandler {
     }
 
     suspend fun onThreadChannelUpdate(threadUpdateEvent: ThreadUpdateEvent) {
-        val tags = kord.rest.channel.getForumChannel(forumChannel.id).availableTags.value!!;
-        val tagStr = kord.rest.channel.getForumChannel(threadUpdateEvent.channel.id).appliedTags
-            .value.orEmpty().map { a -> tags.find { b -> b.id.value == a } }
-            .map { it?.name ?: "" }
+        val targetConfiguration = channelIdMap.get(threadUpdateEvent.channel.parentId) ?: return;
 
-        GithubAPI.retitle(LinkManager.getThreadIdByDiscord(threadUpdateEvent.channel.id),
+        val tags = kord.rest.channel.getForumChannel(threadUpdateEvent.channel.parentId).availableTags.value!!;
+        val tagStr = (kord.rest.channel.getForumChannel(threadUpdateEvent.channel.id).appliedTags
+            .value.orEmpty().map { a -> tags.find { b -> b.id.value == a } }
+            .map { it?.name ?: "" }).toSet() + targetConfiguration.tags
+
+        GithubAPI.retitle(LinkManager.getThreadIdByDiscord(threadUpdateEvent.channel.parentId, threadUpdateEvent.channel.id),
             threadUpdateEvent.channel.name,
-            tagStr
+            tagStr.toList()
         );
     }
 }

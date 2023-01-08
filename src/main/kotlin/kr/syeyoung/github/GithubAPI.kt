@@ -17,6 +17,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Serializer
 import kotlinx.serialization.json.Json
+import kr.syeyoung.github.data.Comment
+import kr.syeyoung.github.data.Issue
 import java.security.KeyFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.*
@@ -134,5 +136,35 @@ object GithubAPI {
             this.setBody(Body(body));
         }
         print(response);
+    }
+
+    suspend fun getIssue(issueNum: Long): Issue {
+        var response = client.get("/repos/Dungeons-Guide/Skyblock-Dungeons-Guide/issues/${issueNum}") {
+            bearerAuth(generateInstallationToken().token)
+        }
+        print(response);
+        return response.body();
+    }
+
+    private suspend fun getComments(issueNum: Long, page: Int): List<Comment> {
+        var response = client.get("/repos/Dungeons-Guide/Skyblock-Dungeons-Guide/issues/${issueNum}/comments") {
+            parameter("page", page)
+            parameter("per_page", 100)
+            bearerAuth(generateInstallationToken().token)
+        }
+        print(response);
+        return response.body();
+    }
+    suspend fun getComments(issueNum: Long): List<Comment> {
+        var i = 1;
+        val results: MutableList<Comment> = LinkedList()
+        while(true) {
+            val result = getComments(issueNum, i++)
+            results.addAll(result)
+            if (result.size < 100) {
+                break
+            }
+        }
+        return results;
     }
 }

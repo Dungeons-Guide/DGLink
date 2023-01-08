@@ -7,7 +7,9 @@ import dev.kord.common.entity.DiscordComponent
 import dev.kord.common.entity.DiscordMessage
 import dev.kord.common.entity.Snowflake
 import dev.kord.common.entity.optional.*
+import dev.kord.core.behavior.channel.asChannelOf
 import dev.kord.core.behavior.execute
+import dev.kord.core.entity.channel.thread.ThreadChannel
 import dev.kord.rest.NamedFile
 import dev.kord.rest.builder.message.create.WebhookMessageCreateBuilder
 import dev.kord.rest.builder.message.create.embed
@@ -23,6 +25,7 @@ import kr.syeyoung.discord.getForumChannel
 import kr.syeyoung.discord.patchForumThread
 import kr.syeyoung.github.data.IssueCommentEvent
 import kr.syeyoung.github.data.IssueEvent
+import kr.syeyoung.github.data.Label
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
@@ -88,18 +91,73 @@ public suspend fun WebhookService.executeWebhookCreatingThread(
         request.files.forEach { file(it) }
     }
 }
+
+fun findSuitableChannel(tags: List<Label>): LinkedChannel {
+    for (tag in tags) {
+        val res = tagMap[tag.name];
+        if (res != null) return res;
+    }
+    return defaultchannel;
+}
+
+
+suspend fun recreateIssue(number: Long): Pair<Snowflake, Snowflake> {
+    val issue = GithubAPI.getIssue(number);
+
+    val dscdChannel = findSuitableChannel(issue.labels);
+
+    val tags = kord.rest.channel.getForumChannel(dscdChannel.channelId).availableTags.value!!;
+    println(tags)
+    val tag = tags.filter { a -> issue.labels.any { it.name == a.name } }
+        .map { it.id.value!! }
+    println(tag)
+
+    val message = dscdChannel.webhook.kord.rest.webhook.executeWebhookCreatingThread(
+        webhookId = dscdChannel.webhookId,
+        token = dscdChannel.webhookSecret,
+        wait = true,
+        threadName = issue.title,
+        builder = {
+            this.content = issue.body
+            this.avatarUrl = issue.user.avatarUrl
+            this.username = issue.user.login
+        },
+        tags = tag
+    )!!;
+    LinkManager.makeLink(issue.number, dscdChannel.channelId, message.id);
+    dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
+        this.content = "This issue has been linked to github issues! [Here](${issue.htmlUrl})"
+        this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
+        this.username = "Github Issues"
+    }
+
+    val comments = GithubAPI.getComments(number)
+    for (comment in comments) {
+        val msg = dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
+            this.avatarUrl = comment.user.avatarUrl
+            this.username = comment.user.login
+            this.content = comment.body
+        }
+
+        LinkManager.linkMessage(issue.number, comment.id, message.id, msg.id);
+    }
+    return Pair(dscdChannel.channelId, message.id)
+}
+
 class WebhookHandler {
     companion object {
         suspend fun onIssueOpened(element: IssueEvent) {
-            val tags = kord.rest.channel.getForumChannel(forumChannel.id).availableTags.value!!;
+            val dscdChannel = findSuitableChannel(element.issue.labels);
+
+            val tags = kord.rest.channel.getForumChannel(dscdChannel.channelId).availableTags.value!!;
             println(tags)
             val tag = tags.filter { a -> element.issue.labels.any { it.name == a.name } }
                 .map { it.id.value!! }
             println(tag)
 
-            val message = webhook.kord.rest.webhook.executeWebhookCreatingThread(
-                webhookId = webhook.id,
-                token = webhook_token,
+            val message = dscdChannel.webhook.kord.rest.webhook.executeWebhookCreatingThread(
+                webhookId = dscdChannel.webhookId,
+                token = dscdChannel.webhookSecret,
                 wait = true,
                 threadName = element.issue.title,
                 builder = {
@@ -109,11 +167,11 @@ class WebhookHandler {
                 },
                 tags = tag
             )!!;
-            LinkManager.makeLink(element.issue.number, message.id);
+            LinkManager.makeLink(element.issue.number, dscdChannel.channelId, message.id);
 
             GithubAPI.createComment(element.issue.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${message.thread.value?.parentId?.value}/${message.thread.value?.id})");
 
-            webhook.execute(webhook_token, threadId = message.id) {
+            dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
                 this.content = "This issue has been linked to github issues! [Here](${element.issue.htmlUrl})"
                 this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
                 this.username = "Github Issues"
@@ -123,17 +181,21 @@ class WebhookHandler {
         }
         suspend fun onIssueDeleted(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
-            LinkManager.unLink(element.issue.number, thread );
-            kord.rest.channel.deleteChannel(thread)
+            LinkManager.unLink(element.issue.number, thread.first, thread.second );
+            kord.rest.channel.deleteChannel(thread.second)
         }
         suspend fun onIssueEdited(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(name = Optional(element.issue.title)), reason = "github update", )
+
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
+
+
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(name = Optional(element.issue.title)), reason = "github update", )
             val root: Pair<Long, Long>? = LinkManager.getDiscordIdByTGithub(element.issue.number);
             if (root != null) {
                 kord.rest.webhook.editWebhookMessage(
-                    webhookId = webhook.id,
-                    webhook_token,
+                    webhookId = channel.webhookId,
+                    channel.webhookSecret,
                     threadId = Snowflake( root.first),
                     messageId = Snowflake(root.second)
                 ) {
@@ -143,8 +205,9 @@ class WebhookHandler {
         }
         suspend fun onIssueLocked(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -159,12 +222,13 @@ class WebhookHandler {
                 this.username = "Github Issues"
             }
 
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
         }
         suspend fun onIssueUnlocked(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -178,12 +242,13 @@ class WebhookHandler {
                 this.username = "Github Issues"
             }
 
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
         }
         suspend fun onIssueReopened(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -200,12 +265,13 @@ class WebhookHandler {
                 this.username = "Github Issues"
             }
 
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
         }
         suspend fun onIssueClosed(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -221,73 +287,93 @@ class WebhookHandler {
                 this.username = "Github Issues"
             }
 
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(locked = element.issue.locked.optional(), archived = (element.issue.state == "closed").optional()))
         }
         suspend fun onIssueLabeled(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number)
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-
-            webhook.execute(webhook_token, threadId = thread) {
-                this.embed {
-                    author {
-                        this.icon = element.sender.avatarUrl;
-                        this.name = element.sender.login;
-                        this.url = element.sender.htmlUrl;
+            val shouldBeInChannel = findSuitableChannel(element.issue.labels);
+            if (shouldBeInChannel == channel) {
+                channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
+                    this.embed {
+                        author {
+                            this.icon = element.sender.avatarUrl;
+                            this.name = element.sender.login;
+                            this.url = element.sender.htmlUrl;
+                        }
+                        this.color = Color(0, 255, 0);
+                        this.title = "Label Assigned"
+                        this.description = element.label?.name
                     }
-                    this.color = Color(0,255,0);
-                    this.title = "Label Assigned"
-                    this.description= element.label?.name
+                    this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
+                    this.username = "Github Issues"
                 }
-                this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
-                this.username = "Github Issues"
+
+                // put tags?
+                val tags = kord.rest.channel.getForumChannel(channel.channelId).availableTags.value!!;
+                val currentTags = kord.rest.channel.getForumChannel(thread.second);
+                if ((currentTags.appliedTags.value?.size ?: 100) >= 5) return
+
+                val tag = tags.find { element.label?.name == it.name } ?: return;
+                kord.rest.channel.patchForumThread(
+                    thread.second, ForumThreadModifyPatchRequest(
+                        appliedTags = Optional(
+                            mutableListOf<Snowflake>() + currentTags.appliedTags.value!! + tag.id.value!!
+                        )
+                    )
+                )
+            } else {
+                kord.rest.channel.deleteChannel(thread.second, "Tag Changed: Applying rule ${channel.configurationName}")
+                recreateIssue(element.issue.number)
             }
-
-            // put tags?
-            val tags = kord.rest.channel.getForumChannel(forumChannel.id).availableTags.value!!;
-            val currentTags = kord.rest.channel.getForumChannel(thread);
-            if ((currentTags.appliedTags.value?.size ?: 100) >= 5) return
-
-            val tag = tags.find { element.label?.name == it.name } ?: return;
-            kord.rest.channel.patchForumThread(thread, ForumThreadModifyPatchRequest(appliedTags = Optional(
-                mutableListOf<Snowflake>() + currentTags.appliedTags.value!! + tag.id.value!!
-            ))
-            )
         }
         suspend fun onIssueUnlabeled(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number)
-
-
-            webhook.execute(webhook_token, threadId = thread) {
-                this.embed {
-                    author {
-                        this.icon = element.sender.avatarUrl;
-                        this.name = element.sender.login;
-                        this.url = element.sender.htmlUrl;
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
+            val shouldBeInChannel = findSuitableChannel(element.issue.labels);
+            if (shouldBeInChannel == channel) {
+                channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
+                    this.embed {
+                        author {
+                            this.icon = element.sender.avatarUrl;
+                            this.name = element.sender.login;
+                            this.url = element.sender.htmlUrl;
+                        }
+                        this.color = Color(255, 255, 0);
+                        this.title = "Label Removed"
+                        this.description = element.label?.name
                     }
-                    this.color = Color(255,255,0);
-                    this.title = "Label Removed"
-                    this.description= element.label?.name
+                    this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
+                    this.username = "Github Issues"
                 }
-                this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
-                this.username = "Github Issues"
+                // put tags?
+                val tags = kord.rest.channel.getForumChannel(channel.channelId).availableTags.value!!;
+                val currentTags = kord.rest.channel.getForumChannel(thread.second);
+                if ((currentTags.appliedTags.value?.size ?: 100) >= 5) return
+
+                val tag = tags.find { element.label?.name == it.name } ?: return;
+                if (!(currentTags.appliedTags.value.orEmpty().contains(tag.id.value))) return;
+
+                kord.rest.channel.patchForumThread(
+                    thread.second, ForumThreadModifyPatchRequest(
+                        appliedTags = Optional(
+                            mutableListOf<Snowflake>() + currentTags.appliedTags.value.orEmpty() - tag.id.value!!
+                        )
+                    )
+                )
+            } else {
+                kord.rest.channel.deleteChannel(thread.second, "Tag Changed: Applying rule ${channel.configurationName}")
+                recreateIssue(element.issue.number)
             }
-            // put tags?
-            val tags = kord.rest.channel.getForumChannel(forumChannel.id).availableTags.value!!;
-            val currentTags = kord.rest.channel.getForumChannel(thread);
-            if ((currentTags.appliedTags.value?.size ?: 100) >= 5) return
-
-            val tag = tags.find { element.label?.name == it.name } ?: return;
-            if (!(currentTags.appliedTags.value.orEmpty().contains(tag.id.value))) return;
-
-            kord.rest.channel.patchForumThread(thread, ForumThreadModifyPatchRequest(appliedTags = Optional(
-                mutableListOf<Snowflake>() + currentTags.appliedTags.value.orEmpty() - tag.id.value!!
-            ))
-            )
         }
+
+
         suspend fun onIssuePinned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -303,8 +389,9 @@ class WebhookHandler {
         }
         suspend fun onIssueUnpinned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -320,8 +407,9 @@ class WebhookHandler {
         }
         suspend fun onIssueMilestoned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -341,8 +429,9 @@ class WebhookHandler {
         }
         suspend fun onIssueDemilestoned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -362,8 +451,9 @@ class WebhookHandler {
         }
         suspend fun onIssueAssigned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -384,8 +474,9 @@ class WebhookHandler {
         }
         suspend fun onIssueUnassigned(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -406,8 +497,9 @@ class WebhookHandler {
         }
         suspend fun onIssueTransferred(element: IssueEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            webhook.execute(webhook_token, threadId = thread) {
+            channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.embed {
                     author {
                         this.icon = element.sender.avatarUrl;
@@ -420,19 +512,20 @@ class WebhookHandler {
                 this.avatarUrl = "https://avatars.githubusercontent.com/u/87838487?s=80&v=4"
                 this.username = "Github Issues"
             }
-            kord.rest.channel.patchThread(thread, ChannelModifyPatchRequest(locked = true.optional(), archived = true.optional()))
+            kord.rest.channel.patchThread(thread.second, ChannelModifyPatchRequest(locked = true.optional(), archived = true.optional()))
         }
 
         suspend fun onCommentCreated(element: IssueCommentEvent) {
             val thread = LinkManager.getThreadIdByGithub(element.issue.number);
+            val channel = channelIdMap[thread.first] ?: throw IllegalStateException("$thread is not registered?")
 
-            val msg = webhook.execute(webhook_token, threadId = thread) {
+            val msg = channel.webhook.execute(channel.webhookSecret, threadId = thread.second) {
                 this.avatarUrl = element.sender.avatarUrl
                 this.username = element.sender.login
                 this.content = element.comment.body
             }
 
-            LinkManager.linkMessage(element.issue.number, element.comment.id, thread, msg.id);
+            LinkManager.linkMessage(element.issue.number, element.comment.id, thread.second, msg.id);
         }
         suspend fun onCommentDeleted(element: IssueCommentEvent) {
             val message = LinkManager.getMessageIdByGithub(element.issue.number , element.comment.id)
@@ -441,10 +534,14 @@ class WebhookHandler {
         }
         suspend fun onCommentEdited(element: IssueCommentEvent) {
             val message = LinkManager.getMessageIdByGithub(element.issue.number, element.comment.id)
+            val parent = (kord.getChannel(message.first) as ThreadChannel).parentId;
+            val channel = channelIdMap[
+                parent
+            ] ?: throw IllegalStateException("${message.first}'s parent Channel ${parent} not registered?")
 
             kord.rest.webhook.editWebhookMessage(
-                webhookId = webhook.id,
-                token = webhook_token,
+                webhookId = channel.webhook.id,
+                token = channel.webhookSecret,
                 messageId = message.second,
                 threadId = message.first
             ) {

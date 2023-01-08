@@ -3,12 +3,12 @@ package kr.syeyoung
 import dev.kord.common.entity.Snowflake
 
 object LinkManager {
-    suspend fun makeLink(issueNum: Long, threadId: Snowflake) {
-        redisClient.set("link.github.$issueNum", threadId.toString())
-        redisClient.set("link.discord.$threadId", issueNum.toString())
+    suspend fun makeLink(issueNum: Long, parentId: Snowflake, threadId: Snowflake) {
+        redisClient.set("link.github.$issueNum", "$parentId-$threadId")
+        redisClient.set("link.discord.$parentId.$threadId", issueNum.toString())
     }
-    suspend fun unLink(issueNum: Long, threadId: Snowflake) {
-        redisClient.del("link.github.$issueNum", "link.discord.$threadId");
+    suspend fun unLink(issueNum: Long, parentId: Snowflake, threadId: Snowflake) {
+        redisClient.del("link.github.$issueNum", "link.discord.$parentId.$threadId");
     }
 
     suspend fun linkMessage(githubIssueNum: Long, githubCommentId: Long, threadId: Snowflake, messageId: Snowflake) {
@@ -21,11 +21,13 @@ object LinkManager {
         redisClient.set("tlink.discord.$threadId-$messageId", "$githubIssueNum")
     }
 
-    suspend fun getThreadIdByGithub(issueNum: Long):Snowflake {
-        return Snowflake(redisClient.get("link.github.$issueNum")?.toULong() ?: throw IllegalStateException("Not found"));
+    suspend fun getThreadIdByGithub(issueNum: Long): Pair<Snowflake, Snowflake> {
+        return redisClient.get("link.github.$issueNum")
+            ?.split("-")
+            ?.let { Pair(Snowflake(it[0].toULong()), Snowflake(it[1].toULong())) } ?: throw IllegalStateException("Not found");
     }
-    suspend fun getThreadIdByDiscord(id: Snowflake): Long {
-        return redisClient.get("link.discord.$id")?.toLong() ?: throw IllegalStateException("Not found");
+    suspend fun getThreadIdByDiscord(parentId: Snowflake, id: Snowflake): Long {
+        return redisClient.get("link.discord.$parentId.$id")?.toLong() ?: throw IllegalStateException("Not found");
     }
 
     suspend fun getMessageIdByGithub(issueNum: Long, commentId: Long): Pair<Snowflake, Snowflake> {

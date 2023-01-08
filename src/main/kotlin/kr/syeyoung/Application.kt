@@ -17,6 +17,7 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kr.syeyoung.discord.registerCommands
 import kr.syeyoung.discord.registerHandlers
 import kr.syeyoung.github.GithubAPI
 import kr.syeyoung.plugins.*
@@ -31,36 +32,48 @@ suspend fun main() = coroutineScope {
 }
 
 lateinit var kord: Kord;
-lateinit var forumChannel: Channel
-lateinit var webhook: Webhook;
-val webhook_token: String = System.getenv("TARGET_WEBHOOK_SECRET")
+
+
+lateinit var defaultchannel: LinkedChannel;
+val linkedChannels: MutableList<LinkedChannel>  = ArrayList();
+val tagMap: MutableMap<String, LinkedChannel> = HashMap();
+val channelIdMap: MutableMap<Snowflake, LinkedChannel> = HashMap();
+data class LinkedChannel(val channelId: Snowflake,
+                         val channel: Channel,
+                         val webhookId: Snowflake,
+                         val webhookSecret: String,
+                         val webhook: Webhook,
+                         val configurationName: String,
+                         val tags: Set<String>)
+
+
 suspend fun setupDiscord() {
     kord = Kord(System.getenv("BOT_TOKEN"))
 
-//    kord.on<MessageCreateEvent> {
-//        if (message.content != "!ping") return@on
-//
-//        val response = message.channel.createMessage("Pong!")
-//        response.addReaction(pingPong)
-//
-//        delay(5000)
-//        message.delete()
-//        response.delete()
-//    }
-
     kord.registerHandlers()
+    kord.registerCommands()
 
 
     kord.on<ReadyEvent> {
-        forumChannel = kord.getChannel(
-            Snowflake(System.getenv("TARGET_CHANNEL").toLong()),
-            EntitySupplyStrategy.rest
-        )!!;
+        val configs: List<String> = System.getenv("TARGET_CHANNEL_CONF").split(",");
+        for (config in configs) {
+            val channel = LinkedChannel(
+                channelId = Snowflake(System.getenv("DSCD_${config}_CHANNEL_ID").toULong()),
+                channel = kord.getChannel(Snowflake(System.getenv("DSCD_${config}_CHANNEL_ID").toULong()), EntitySupplyStrategy.rest) ?: throw IllegalArgumentException("Channel does not exist for ${config}"),
+                webhookId = Snowflake(System.getenv("DSCD_${config}_WEBHOOK_ID").toULong()),
+                webhookSecret = System.getenv("DSCD_${config}_WEBHOOK_SECRET"),
+                webhook = kord.getWebhookWithToken(Snowflake(System.getenv("DSCD_${config}_WEBHOOK_ID").toULong()), System.getenv("DSCD_${config}_WEBHOOK_SECRET")),
+                configurationName = config,
+                tags = System.getenv("DSCD_${config}_TAGS").split(",").toSet())
+            linkedChannels.add(channel)
+            channel.tags.forEach {
+                tagMap.put(it, channel)
+            }
+            channelIdMap.put(channel.channelId, channel)
 
-        webhook = kord.getWebhookWithToken(
-            Snowflake(System.getenv("TARGET_WEBHOOK_ID").toLong()),
-            System.getenv("TARGET_WEBHOOK_SECRET")
-        );
+            if (config == System.getenv("TARGET_CHANNEL_DEFAULT"))
+                defaultchannel = channel;
+        }
     }
     kord.login {
         @OptIn(PrivilegedIntent::class)
