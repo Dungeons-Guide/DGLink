@@ -73,7 +73,6 @@ public suspend fun WebhookService.executeWebhookCreatingThread(
     token: String,
     wait: Boolean? = null,
     threadName: String,
-    tags: List<Snowflake>,
     builder: WebhookMessageCreateBuilder.() -> Unit
 ): DiscordMessage? {
     contract {
@@ -86,7 +85,6 @@ public suspend fun WebhookService.executeWebhookCreatingThread(
         wait?.let { parameter("wait", it) }
         val request = WebhookMessageCreateBuilder().apply(builder).toRequest2()
         request.request.threadName = Optional(threadName)
-        request.request.appliedTags = Optional(tags)
         body(WebhookExecuteRequest2.serializer(), request.request)
         request.files.forEach { file(it) }
     }
@@ -121,9 +119,15 @@ suspend fun recreateIssue(number: Long): Pair<Snowflake, Snowflake> {
             this.content = issue.body
             this.avatarUrl = issue.user.avatarUrl
             this.username = issue.user.login
-        },
-        tags = tag
+        }
     )!!;
+    kord.rest.channel.patchForumThread(
+        message.id, ForumThreadModifyPatchRequest(
+            appliedTags = Optional(
+                mutableListOf<Snowflake>() + tag
+            )
+        )
+    )
     LinkManager.makeLink(issue.number, dscdChannel.channelId, message.id);
     dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
         this.content = "This issue has been linked to github issues! [Here](${issue.htmlUrl})"
@@ -133,6 +137,8 @@ suspend fun recreateIssue(number: Long): Pair<Snowflake, Snowflake> {
 
     val comments = GithubAPI.getComments(number)
     for (comment in comments) {
+        if (comment.user.htmlUrl == "https://github.com/apps/dungeons-guide-issue-tracker"
+            && !comment.body.startsWith("[")) continue
         val msg = dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
             this.avatarUrl = comment.user.avatarUrl
             this.username = comment.user.login
@@ -141,6 +147,8 @@ suspend fun recreateIssue(number: Long): Pair<Snowflake, Snowflake> {
 
         LinkManager.linkMessage(issue.number, comment.id, message.id, msg.id);
     }
+    GithubAPI.createComment(issue.number, "This issue has been relinked to new discord forum thread! [Here](https://discord.com/channels/${dscdChannel.channelId}/${message.id})");
+
     return Pair(dscdChannel.channelId, message.id)
 }
 
@@ -164,12 +172,18 @@ class WebhookHandler {
                     this.content = element.issue.body
                     this.avatarUrl = element.issue.user.avatarUrl
                     this.username = element.issue.user.login
-                },
-                tags = tag
+                }
             )!!;
+            kord.rest.channel.patchForumThread(
+                message.id, ForumThreadModifyPatchRequest(
+                    appliedTags = Optional(
+                        mutableListOf<Snowflake>() + tag
+                    )
+                )
+            )
             LinkManager.makeLink(element.issue.number, dscdChannel.channelId, message.id);
 
-            GithubAPI.createComment(element.issue.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${message.thread.value?.parentId?.value}/${message.thread.value?.id})");
+            GithubAPI.createComment(element.issue.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${dscdChannel.channelId}/${message.id})");
 
             dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
                 this.content = "This issue has been linked to github issues! [Here](${element.issue.htmlUrl})"

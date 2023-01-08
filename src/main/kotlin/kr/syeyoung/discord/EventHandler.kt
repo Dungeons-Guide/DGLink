@@ -30,6 +30,7 @@ fun Kord.registerHandlers() {
     }
     this.on<MessageUpdateEvent> {
         if (this.getMessage().author?.id == kord.selfId) return@on;
+        if (this.getMessage().author == null) return@on;
         EventHandler.onMessageUpdate(this)
     }
     this.on<ThreadChannelCreateEvent> {
@@ -54,9 +55,9 @@ object EventHandler {
             event.message.channelId);
 
         val id = GithubAPI.createComment(threadId, """
-            [`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): ${event.message.content}
-            ${event.message.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n") }
-        """.trimIndent());
+            |[`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): ${event.message.content}
+            |${event.message.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n") }
+        """.trimMargin());
 
         LinkManager.linkMessage(threadId, id, event.message.channelId, event.message.id)
     }
@@ -65,17 +66,17 @@ object EventHandler {
         if (tgithub != null) {
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.recontent(tgithub, """
-            [`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
-            ${event.new.attachments.value?.map { "![${it.filename}](${it.proxyUrl})" }?.joinToString("\n") }
-        """.trimIndent());
+            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
+            |${event.new.attachments.value?.map { "![${it.filename}](${it.proxyUrl})" }?.joinToString("\n") }
+        """.trimMargin());
         } else {
             val threadId = LinkManager.getGithubIdByDiscord(event.message.channelId, event.messageId);
 
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.editComment(threadId.first, threadId.second, """
-            [`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
-            ${event.new.attachments.value?.map { "${if (it.height != dev.kord.common.entity.optional.OptionalInt.Missing)  "!" else ""}[${it.filename}](${it.url})" }?.joinToString("\n") }
-        """.trimIndent());
+            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
+            |${event.new.attachments.value?.map { "${if (it.height != dev.kord.common.entity.optional.OptionalInt.Missing)  "!" else ""}[${it.filename}](${it.url})" }?.joinToString("\n") }
+        """.trimMargin());
         }
     }
     suspend fun onMessageDelete(event: MessageDeleteEvent) {
@@ -99,9 +100,9 @@ object EventHandler {
 
         val id = GithubAPI.createIssue(threadChannelCreateEvent.channel.name,
             """
-            [`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}): ${firstMsg.content} 
-                ${firstMsg.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n")}
-            """.trimIndent(), tagStr
+            |[`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}): ${firstMsg.content} 
+                |${firstMsg.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n")}
+            """.trimMargin(), tagStr
         );
 
         LinkManager.makeLink(id.number, parentId = threadChannelCreateEvent.channel.parentId, threadId = threadChannelCreateEvent.channel.id);
