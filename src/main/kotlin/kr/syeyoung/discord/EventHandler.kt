@@ -55,7 +55,8 @@ object EventHandler {
             event.message.channelId);
 
         val id = GithubAPI.createComment(threadId, """
-            |[`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): ${event.message.content}
+            |[`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): 
+            |${event.message.content.prependIndent("> ")}
             |${event.message.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n") }
         """.trimMargin());
 
@@ -66,7 +67,8 @@ object EventHandler {
         if (tgithub != null) {
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.recontent(tgithub, """
-            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
+            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): 
+            |${event.new.content.value?.prependIndent("> ")} 
             |${event.new.attachments.value?.map { "![${it.filename}](${it.proxyUrl})" }?.joinToString("\n") }
         """.trimMargin());
         } else {
@@ -74,7 +76,8 @@ object EventHandler {
 
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.editComment(threadId.first, threadId.second, """
-            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): ${event.new.content.value}
+            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}):
+            |${event.new.content.value?.prependIndent("> ")} 
             |${event.new.attachments.value?.map { "${if (it.height != dev.kord.common.entity.optional.OptionalInt.Missing)  "!" else ""}[${it.filename}](${it.url})" }?.joinToString("\n") }
         """.trimMargin());
         }
@@ -100,7 +103,8 @@ object EventHandler {
 
         val id = GithubAPI.createIssue(threadChannelCreateEvent.channel.name,
             """
-            |[`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}): ${firstMsg.content} 
+            |[`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}):
+            |${firstMsg.content.prependIndent("> ")} 
                 |${firstMsg.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n")}
             """.trimMargin(), tagStr
         );

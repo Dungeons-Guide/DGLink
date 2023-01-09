@@ -147,7 +147,7 @@ suspend fun recreateIssue(number: Long): Pair<Snowflake, Snowflake> {
 
         LinkManager.linkMessage(issue.number, comment.id, message.id, msg.id);
     }
-    GithubAPI.createComment(issue.number, "This issue has been relinked to new discord forum thread! [Here](https://discord.com/channels/${dscdChannel.channelId}/${message.id})");
+    GithubAPI.createComment(issue.number, "This issue has been relinked to new discord forum thread! [Here](https://discord.com/channels/${dscdChannel.webhook.guildId}/${message.channelId})");
 
     return Pair(dscdChannel.channelId, message.id)
 }
@@ -183,7 +183,7 @@ class WebhookHandler {
             )
             LinkManager.makeLink(element.issue.number, dscdChannel.channelId, message.id);
 
-            GithubAPI.createComment(element.issue.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${dscdChannel.channelId}/${message.id})");
+            GithubAPI.createComment(element.issue.number, "This issue has been linked to discord forum thread! [Here](https://discord.com/channels/${dscdChannel.webhook.guildId}/${message.channelId})");
 
             dscdChannel.webhook.execute(dscdChannel.webhookSecret, threadId = message.id) {
                 this.content = "This issue has been linked to github issues! [Here](${element.issue.htmlUrl})"
