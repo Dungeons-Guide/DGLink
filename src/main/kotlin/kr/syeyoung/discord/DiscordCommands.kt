@@ -1,5 +1,7 @@
 package kr.syeyoung.discord
 
+import dev.kord.common.DiscordBitSet
+import dev.kord.common.entity.ALL
 import dev.kord.common.entity.Permissions
 import dev.kord.common.entity.Snowflake
 import dev.kord.core.Kord
@@ -9,7 +11,7 @@ import dev.kord.core.behavior.interaction.response.edit
 import dev.kord.core.behavior.interaction.response.respond
 import dev.kord.core.event.interaction.GuildChatInputCommandInteractionCreateEvent
 import dev.kord.core.on
-import dev.kord.rest.builder.interaction.int
+import dev.kord.rest.builder.interaction.integer
 import kr.syeyoung.LinkManager
 import kr.syeyoung.github.recreateIssue
 import java.lang.Exception
@@ -18,11 +20,11 @@ suspend fun Kord.registerCommands() {
     this.createGuildChatInputCommand(
         Snowflake(System.getenv("GUILD_ID").toULong()),
         "recreate-issue", "Creates issue from github or recreates one") {
-        int("issue-num", "Number for issue") {
+        this.integer("issue-num", "Number for issue") {
             required=true
             minValue = 0
         }
-        defaultMemberPermissions = Permissions("0")
+        defaultMemberPermissions = Permissions.Builder(DiscordBitSet("0")).build();
     }
     on<GuildChatInputCommandInteractionCreateEvent> {
         if (interaction.command.rootName == "recreate-issue") {

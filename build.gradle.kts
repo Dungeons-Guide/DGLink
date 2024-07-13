@@ -6,7 +6,9 @@ plugins {
     kotlin("jvm") version "1.8.0"
     id("io.ktor.plugin") version "2.2.1"
                 id("org.jetbrains.kotlin.plugin.serialization") version "1.8.0"
+    id("com.palantir.docker") version "0.22.1"
 }
+
 
 group = "kr.syeyoung"
 version = "0.0.1"
@@ -15,6 +17,13 @@ application {
 
     val isDevelopment: Boolean = project.ext.has("development")
     applicationDefaultJvmArgs = listOf("-Dio.ktor.development=$isDevelopment")
+}
+
+docker {
+    name = "${project.name}:${project.version}"
+    files(tasks.shadowJar.get().outputs)
+    tag("dgRegistry", "registry.dungeons.guide/github-link:${project.version}")
+    setDockerfile(file("Dockerfile"))
 }
 
 repositories {
@@ -32,7 +41,7 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:$ktor_version")
     implementation("io.ktor:ktor-server-double-receive:$ktor_version")
     implementation("ch.qos.logback:logback-classic:$logback_version")
-    implementation("dev.kord:kord-core:0.8.0-M17")
+    implementation("dev.kord:kord-core:0.14.0")
     implementation("io.github.crackthecodeabhi:kreds:0.8")
     implementation("io.jsonwebtoken:jjwt-api:0.11.2")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.11.2")

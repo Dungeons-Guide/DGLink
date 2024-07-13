@@ -50,12 +50,14 @@ fun Kord.registerHandlers() {
 object EventHandler {
     suspend fun onMessageCreate(event: MessageCreateEvent) {
         if (event.message.type != dev.kord.common.entity.MessageType.Default) return;
+        if (event.message.channel !is ThreadChannel) return
+
 
         val threadId = LinkManager.getThreadIdByDiscord(event.message.channel.asChannelOf<ThreadChannel>().parentId,
             event.message.channelId);
 
         val id = GithubAPI.createComment(threadId, """
-            |[`${event.member?.tag} | ${event.member?.displayName}`](https://discordapp.com/channels/@me/${event.member?.id}): 
+            |[`${event.member?.tag} | ${event.member?.effectiveName}`](https://discordapp.com/channels/@me/${event.member?.id}): 
             |${event.message.content.prependIndent("> ")}
             |${event.message.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n") }
         """.trimMargin());
@@ -67,7 +69,7 @@ object EventHandler {
         if (tgithub != null) {
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.recontent(tgithub, """
-            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}): 
+            |[`${member?.tag} | ${member?.effectiveName}`](https://discordapp.com/channels/@me/${member?.id}): 
             |${event.new.content.value?.prependIndent("> ")} 
             |${event.new.attachments.value?.map { "![${it.filename}](${it.proxyUrl})" }?.joinToString("\n") }
         """.trimMargin());
@@ -76,7 +78,7 @@ object EventHandler {
 
             val member = event.getMessage().getAuthorAsMember();
             GithubAPI.editComment(threadId.first, threadId.second, """
-            |[`${member?.tag} | ${member?.displayName}`](https://discordapp.com/channels/@me/${member?.id}):
+            |[`${member?.tag} | ${member?.effectiveName}`](https://discordapp.com/channels/@me/${member?.id}):
             |${event.new.content.value?.prependIndent("> ")} 
             |${event.new.attachments.value?.map { "${if (it.height != dev.kord.common.entity.optional.OptionalInt.Missing)  "!" else ""}[${it.filename}](${it.url})" }?.joinToString("\n") }
         """.trimMargin());
@@ -94,16 +96,16 @@ object EventHandler {
 
         val targetConfiguration = channelIdMap.get(threadChannelCreateEvent.channel.parentId) ?: return;
 
-        val tags = kord.rest.channel.getForumChannel(threadChannelCreateEvent.channel.parentId).availableTags.value!!;
-        var tagStr = kord.rest.channel.getForumChannel(threadChannelCreateEvent.channel.id).appliedTags
-            .value.orEmpty().map { a -> tags.find { b -> b.id.value == a } }
+        val tags = kord.rest.channel.getChannel(threadChannelCreateEvent.channel.parentId).availableTags.value!!;
+        var tagStr = kord.rest.channel.getChannel(threadChannelCreateEvent.channel.id).appliedTags
+            .value.orEmpty().map { a -> tags.find { b -> b.id == a } }
             .map { it?.name ?: "" }
         tagStr = (tagStr.toSet() + targetConfiguration.tags).toList()
 
 
         val id = GithubAPI.createIssue(threadChannelCreateEvent.channel.name,
             """
-            |[`${name.tag} | ${name.displayName}`](https://discordapp.com/channels/@me/${name.id}):
+            |[`${name.tag} | ${name.effectiveName}`](https://discordapp.com/channels/@me/${name.id}):
             |${firstMsg.content.prependIndent("> ")} 
                 |${firstMsg.attachments.map { "${if (it.isImage)  "!" else ""}[${it.filename}](${it.url})" }.joinToString("\n")}
             """.trimMargin(), tagStr
@@ -129,9 +131,9 @@ object EventHandler {
     suspend fun onThreadChannelUpdate(threadUpdateEvent: ThreadUpdateEvent) {
         val targetConfiguration = channelIdMap.get(threadUpdateEvent.channel.parentId) ?: return;
 
-        val tags = kord.rest.channel.getForumChannel(threadUpdateEvent.channel.parentId).availableTags.value!!;
-        val tagStr = (kord.rest.channel.getForumChannel(threadUpdateEvent.channel.id).appliedTags
-            .value.orEmpty().map { a -> tags.find { b -> b.id.value == a } }
+        val tags = kord.rest.channel.getChannel(threadUpdateEvent.channel.parentId).availableTags.value!!;
+        val tagStr = (kord.rest.channel.getChannel(threadUpdateEvent.channel.id).appliedTags
+            .value.orEmpty().map { a -> tags.find { b -> b.id == a } }
             .map { it?.name ?: "" }).toSet() + targetConfiguration.tags
 
         GithubAPI.retitle(LinkManager.getThreadIdByDiscord(threadUpdateEvent.channel.parentId, threadUpdateEvent.channel.id),

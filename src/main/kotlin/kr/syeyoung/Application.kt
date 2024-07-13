@@ -48,15 +48,22 @@ data class LinkedChannel(val channelId: Snowflake,
 
 
 suspend fun setupDiscord() {
+    println("Trying to load")
     kord = Kord(System.getenv("BOT_TOKEN"))
+
+    println("Kord instantiated")
 
     kord.registerHandlers()
     kord.registerCommands()
 
+    println("Registered")
+
 
     kord.on<ReadyEvent> {
+        println("READY!")
         val configs: List<String> = System.getenv("TARGET_CHANNEL_CONF").split(",");
         for (config in configs) {
+            println("setting up... ${config}")
             val channel = LinkedChannel(
                 channelId = Snowflake(System.getenv("DSCD_${config}_CHANNEL_ID").toULong()),
                 channel = kord.getChannel(Snowflake(System.getenv("DSCD_${config}_CHANNEL_ID").toULong()), EntitySupplyStrategy.rest) ?: throw IllegalArgumentException("Channel does not exist for ${config}"),
@@ -75,10 +82,12 @@ suspend fun setupDiscord() {
                 defaultchannel = channel;
         }
     }
+    println("Logging in...")
     kord.login {
         @OptIn(PrivilegedIntent::class)
         intents += Intent.MessageContent
     }
+    println("Logged in!")
 }
 
 lateinit var redisClient: KredsClient;
